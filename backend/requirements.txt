@@ -1,0 +1,14 @@
+fastapi
+sqlalchemy
+psycopg2-binary
+pydantic
+python-dotenv
+uvicorn
+PyJWT
+PyMySQL
+pwdlib[argon2]
+cryptography
+alembic
+httpx
+pytest
+openai

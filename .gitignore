@@ -1,0 +1,16 @@
+myenv
+.env
+mysql_data
+mysql_data_new
+*.db
+*__pycache__
+*.ipynb
+backend/myenv
+backend/*.db
+backend/__pycache__/
+backend/**/__pycache__/
+backend/data/
+frontend/node_modules/
+frontend/dist/
+frontend/.local
+.vscode/
