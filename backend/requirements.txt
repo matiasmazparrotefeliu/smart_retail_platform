@@ -1,15 +1,14 @@
 fastapi
 sqlalchemy
-psycopg[binary]
-pydantic[email]
-pydantic_settings
+psycopg2-binary
+pydantic
 python-dotenv
 uvicorn
-python-jose[cryptography]
-passlib[bcrypt]
-bcrypt==4.0.1  # passlib 1.7.4 es incompatible con bcrypt >= 4.1
+PyJWT
+PyMySQL
+pwdlib[argon2]
+cryptography
 alembic
 httpx
 pytest
 openai
-requests
