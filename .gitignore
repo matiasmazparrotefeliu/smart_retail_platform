@@ -1,5 +1,8 @@
 myenv
 .env
+.venv
+venv
+.myenv
 mysql_data
 mysql_data_new
 *.db
@@ -14,3 +17,5 @@ frontend/node_modules/
 frontend/dist/
 frontend/.local
 .vscode/
+.ipynb
+ipynb
