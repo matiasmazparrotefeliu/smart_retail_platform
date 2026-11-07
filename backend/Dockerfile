@@ -21,7 +21,12 @@ COPY . /app
 # Expone el puerto 8000 para la API
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Entrypoint: espera a la BD, aplica migraciones (alembic upgrade head)
+# y arranca Uvicorn.
+COPY entrypoint.sh /app/entrypoint.sh
+# Normaliza saltos de línea CRLF (por si se edita en Windows) y da permisos.
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+CMD ["/app/entrypoint.sh"]
 
 # Healthcheck sin curl (imagen slim)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
