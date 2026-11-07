@@ -1,0 +1,112 @@
+"""Dependencias de FastAPI para autenticación (JWT Bearer) y RBAC.
+
+Expone:
+- `get_current_user`: intercepta el header `Authorization: Bearer <token>`,
+  decodifica/valida el JWT, carga al usuario y lo expone en la petición.
+  El `client_id` del usuario queda disponible para inyectar el aislamiento
+  multi-tenant en las consultas a la base de datos.
+- `RoleChecker`: dependencia parametrizable que valida el rol del usuario
+  (Control de Accesos basado en Roles).
+
+Ejemplos:
+    def mi_ruta(user: User = Depends(get_current_user)):
+        ...  # filtrar con user.client_id
+
+    @router.delete("/...", dependencies=[Depends(RoleChecker(["tenant_admin"]))])
+    ...
+
+Este módulo conoce FastAPI y los modelos, pero no define rutas propias.
+"""
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError
+from sqlalchemy.orm import Session
+
+from src.core.database import get_db
+from src.core.security import decode_access_token
+from src.modules.auth.models import User
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+  """Extrae el token del header, lo valida y devuelve el usuario autenticado."""
+  if credentials is None:
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Se requiere un token de acceso (Authorization: Bearer <token>).",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+  # 1. Decodificar y verificar la firma y vigencia del JWT
+  try:
+    payload = decode_access_token(credentials.credentials)
+  except JWTError:
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token inválido o expirado.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+  # 2. Localizar al usuario indicado en `sub`
+  raw_user_id = payload.get("sub")
+  try:
+    user_id = int(raw_user_id) if raw_user_id is not None else None
+  except (TypeError, ValueError):
+    user_id = None
+
+  if user_id is None:
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token inválido: no contiene un usuario válido.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+  user = db.query(User).filter(User.id == user_id).first()
+  if not user:
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="El usuario del token ya no existe.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+  # 3. Verificar que la cuenta siga activa y verificada
+  if not user.is_active:
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="La cuenta se encuentra desactivada.",
+    )
+  if not user.is_verified:
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="La cuenta no ha verificado su correo electrónico.",
+    )
+
+  return user
+
+
+class RoleChecker:
+  """Dependencia de RBAC: permite la ruta solo a los roles indicados.
+
+  Uso:
+      Depends(RoleChecker(["tenant_admin"]))
+  """
+
+  def __init__(self, allowed_roles: list[str]):
+    self.allowed_roles = allowed_roles
+
+  def __call__(self, user: User = Depends(get_current_user)) -> User:
+    role_name = user.role.name
+    if role_name not in self.allowed_roles:
+      raise HTTPException(
+          status_code=status.HTTP_403_FORBIDDEN,
+          detail=(
+              "Acceso no autorizado: se requiere uno de los roles "
+              f"{', '.join(self.allowed_roles)} (tu rol: {role_name})."
+          ),
+      )
+    return user
