@@ -18,12 +18,13 @@ Ejemplos:
 Este módulo conoce FastAPI y los modelos, pero no define rutas propias.
 """
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
 
 from src.core.database import get_db
+from src.core.exceptions import ForbiddenActionError, UnauthorizedError
 from src.core.security import decode_access_token
 from src.modules.auth.models import User
 
@@ -36,9 +37,8 @@ def get_current_user(
 ) -> User:
   """Extrae el token del header, lo valida y devuelve el usuario autenticado."""
   if credentials is None:
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Se requiere un token de acceso (Authorization: Bearer <token>).",
+    raise UnauthorizedError(
+        "Se requiere un token de acceso (Authorization: Bearer <token>).",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
@@ -46,9 +46,8 @@ def get_current_user(
   try:
     payload = decode_access_token(credentials.credentials)
   except JWTError:
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Token inválido o expirado.",
+    raise UnauthorizedError(
+        "Token inválido o expirado.",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
@@ -60,31 +59,23 @@ def get_current_user(
     user_id = None
 
   if user_id is None:
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Token inválido: no contiene un usuario válido.",
+    raise UnauthorizedError(
+        "Token inválido: no contiene un usuario válido.",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
   user = db.query(User).filter(User.id == user_id).first()
   if not user:
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="El usuario del token ya no existe.",
+    raise UnauthorizedError(
+        "El usuario del token ya no existe.",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
   # 3. Verificar que la cuenta siga activa y verificada
   if not user.is_active:
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="La cuenta se encuentra desactivada.",
-    )
+    raise ForbiddenActionError("La cuenta se encuentra desactivada.")
   if not user.is_verified:
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="La cuenta no ha verificado su correo electrónico.",
-    )
+    raise ForbiddenActionError("La cuenta no ha verificado su correo electrónico.")
 
   return user
 
@@ -102,11 +93,8 @@ class RoleChecker:
   def __call__(self, user: User = Depends(get_current_user)) -> User:
     role_name = user.role.name
     if role_name not in self.allowed_roles:
-      raise HTTPException(
-          status_code=status.HTTP_403_FORBIDDEN,
-          detail=(
-              "Acceso no autorizado: se requiere uno de los roles "
-              f"{', '.join(self.allowed_roles)} (tu rol: {role_name})."
-          ),
+      raise ForbiddenActionError(
+          "Acceso no autorizado: se requiere uno de los roles "
+          f"{', '.join(self.allowed_roles)} (tu rol: {role_name}).",
       )
     return user

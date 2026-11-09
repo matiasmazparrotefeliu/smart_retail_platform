@@ -3,6 +3,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
+from src.core.datetime_utils import utc_now
 from src.modules.tenant.models import Client
 
 class Role(Base):
@@ -30,14 +31,22 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)  # Controla si validó el correo electrónico
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     # Relaciones ORM
+    # lazy="joined": el rol se trae en la MISMA consulta que el usuario.
+    # Se accede a user.role en cada login y cada chequeo de RBAC
+    # (RoleChecker), así que evitar el lazy-load extra elimina el N+1.
     client: Mapped["Client"] = relationship(back_populates="users")
-    role: Mapped["Role"] = relationship(back_populates="users")
+    role: Mapped["Role"] = relationship(back_populates="users", lazy="joined")
     verification_tokens: Mapped[list["VerificationToken"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+
+    @property
+    def role_name(self) -> str:
+        """Nombre del rol, listo para schemas Pydantic (from_attributes)."""
+        return self.role.name
 
 
 class VerificationToken(Base):
@@ -53,7 +62,7 @@ class VerificationToken(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
     # Relación inversa con el usuario
     user: Mapped["User"] = relationship(back_populates="verification_tokens")
