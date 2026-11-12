@@ -15,7 +15,9 @@ Ejemplos:
     @router.delete("/...", dependencies=[Depends(RoleChecker(["tenant_admin"]))])
     ...
 
-Este módulo conoce FastAPI y los modelos, pero no define rutas propias.
+Este módulo conoce FastAPI, los modelos y los repositorios, pero no
+define rutas propias ni emite queries (el acceso a datos pasa por
+`UserRepository`).
 """
 
 from fastapi import Depends
@@ -27,6 +29,7 @@ from src.core.database import get_db
 from src.core.exceptions import ForbiddenActionError, UnauthorizedError
 from src.core.security import decode_access_token
 from src.modules.auth.models import User
+from src.modules.auth.repositories import UserRepository
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -64,7 +67,9 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-  user = db.query(User).filter(User.id == user_id).first()
+  # El acceso a datos pasa por el repositorio (patrón Repository):
+  # este módulo no emite queries propias.
+  user = UserRepository(db).get_by_id(user_id)
   if not user:
     raise UnauthorizedError(
         "El usuario del token ya no existe.",

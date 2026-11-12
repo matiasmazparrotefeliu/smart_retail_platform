@@ -6,19 +6,15 @@ from src.core.exceptions import (
     ForbiddenActionError,
     InvalidRequestError,
 )
-from src.core.security import (
-    create_access_token,
-    get_hash_password,
-    verify_password,
-)
-from src.modules.auth.models import Role, User, VerificationToken
-from src.modules.auth.role_cache import get_role_id
-from src.modules.common.verification import (
-    issue_verification_token,
-    send_verification_email,
+from src.core.security import get_hash_password
+from src.modules.auth.models import Role, User
+from src.modules.auth.repositories import RoleRepository, VerificationTokenRepository
+from src.modules.common.verification import send_verification_email
+from src.modules.tenant.repositories import (
+    ClientRepository,
+    TenantUserRepository,
 )
 from src.modules.tenant.schemas import UserCreateTenant, UserResetPassword, UserUpdateTenant
-from src.modules.tenant.models import Client
 
 # Roles permitidos para usuarios operativos: JAMAS se permite crear otro admin
 # desde este módulo. Unicidad de admin por tenant.
@@ -33,10 +29,30 @@ class TenantService:
     - El `client_id` SIEMPRE proviene del admin autenticado (nunca del body).
     - Los roles asignables restringen a 'analyst' y 'viewer'.
     - Un usuario solo puede gestionar usuarios de su PROPIA empresa.
+
+    Separación de capas: el acceso a datos vive en los repositorios
+    (`TenantUserRepository`, `ClientRepository`); aquí solo queda lógica
+    de negocio, validaciones y control de la transacción (`commit`).
+
+    Inyección: el constructor acepta `Session` por compatibilidad (los
+    tests y llamadores previos construyen `TenantService(db)`), pero los
+    repositorios pueden inyectarse explícitamente desde los routers vía
+    `Depends()` (ver `tenant/router.py`).
     """
 
-    def __init__(self, db: Session):
+    def __init__(
+        self,
+        db: Session,
+        users: TenantUserRepository | None = None,
+        clients: ClientRepository | None = None,
+        roles: RoleRepository | None = None,
+        tokens: VerificationTokenRepository | None = None,
+    ):
         self.db = db
+        self.users = users or TenantUserRepository(db)
+        self.clients = clients or ClientRepository(db)
+        self.roles = roles or RoleRepository(db)
+        self.tokens = tokens or VerificationTokenRepository(db)
 
     # ------------------------------------------------------------------
     # Alta de usuarios operativos
@@ -47,18 +63,14 @@ class TenantService:
         role = self._get_operational_role(data.role_name)
 
         # 2. Unicidad global del correo
-        existing_user = self.db.query(User).filter(User.email == data.email).first()
+        existing_user = self.users.find_by_email(data.email)
         if existing_user:
             raise EntityAlreadyExistsError(
                 "El correo electrónico ya se encuentra registrado.",
             )
 
         # 3. El tenant del admin debe existir y estar activo
-        client = (
-            self.db.query(Client)
-            .filter(Client.id == admin_client_id, Client.is_active.is_(True))
-            .first()
-        )
+        client = self.clients.find_active_by_id(admin_client_id)
         if not client:
             raise EntityNotFoundError(
                 "La empresa del administrador no existe o está inactiva.",
@@ -73,11 +85,10 @@ class TenantService:
             is_active=True,
             is_verified=False,
         )
-        self.db.add(new_user)
-        self.db.flush()  # Obtiene new_user.id sin confirmar la transacción
+        self.users.add(new_user)  # flush: obtiene new_user.id sin confirmar
 
         # 5. Token de verificación + aviso, dentro de la misma transacción
-        verification_token = issue_verification_token(self.db, user_id=new_user.id)
+        verification_token = self.tokens.create_for_user(new_user.id)
         self.db.commit()
         self.db.refresh(new_user)
 
@@ -127,22 +138,26 @@ class TenantService:
     # ------------------------------------------------------------------
     def list_tenant_users(self, admin_client_id: int) -> list[User]:
         """Lista todos los usuarios (admin incluido) de la empresa del admin."""
-        return (
-            self.db.query(User)
-            .filter(User.client_id == admin_client_id)
-            .order_by(User.created_at)
-            .all()
-        )
+        return self._tenant_users(admin_client_id).list_tenant_entities()
 
     # ------------------------------------------------------------------
     # Helpers privados
     # ------------------------------------------------------------------
+    def _tenant_users(self, admin_client_id: int) -> TenantUserRepository:
+        """Vista del repositorio de usuarios acotada al tenant del admin.
+
+        El scope SIEMPRE proviene del `client_id` del JWT del admin
+        autenticado (nunca del body del request).
+        """
+        return self.users.for_tenant(admin_client_id)
+
     def _get_operational_role(self, role_name: str) -> Role:
         """Valida que el rol exista y NO sea administrativo.
 
-        El lookup name→id pasa por el cache en memoria; la recuperación del
-        objeto por PK aprovecha el identity-map de la sesión (sin query si
-        ya está cargada).
+        El lookup name→Role pasa por `RoleRepository`, cuyo cache en
+        memoria a nivel de proceso evita repetir la consulta; la
+        recuperación del objeto por PK aprovecha el identity-map de la
+        sesión (sin query si ya está cargada).
         """
         if role_name == FORBIDDEN_ADMIN_ROLE:
             raise ForbiddenActionError(
@@ -154,21 +169,14 @@ class TenantService:
                 f"Roles válidos: {', '.join(sorted(ALLOWED_OPERATIONAL_ROLES))}.",
             )
 
-        role_id = get_role_id(self.db, role_name)
-        if role_id is None:
-            raise EntityNotFoundError(f"El rol '{role_name}' no existe en el sistema.")
-        role = self.db.get(Role, role_id)
-        if role is None:  # por si la DB cambió bajo los pies del cache
+        role = self.roles.find_by_name_cached(role_name)
+        if role is None:  # inexistente, o la DB cambió bajo los pies del cache
             raise EntityNotFoundError(f"El rol '{role_name}' no existe en el sistema.")
         return role
 
     def _get_tenant_user(self, admin_client_id: int, user_id: int) -> User:
         """Obtiene un usuario verificando que pertenezca al tenant del admin."""
-        user = (
-            self.db.query(User)
-            .filter(User.id == user_id, User.client_id == admin_client_id)
-            .first()
-        )
+        user = self._tenant_users(admin_client_id).get_tenant_entity(user_id)
         if not user:
             raise EntityNotFoundError(
                 "El usuario no existe o no pertenece a tu empresa.",
