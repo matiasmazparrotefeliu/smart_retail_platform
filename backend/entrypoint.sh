@@ -1,7 +1,8 @@
 #!/bin/sh
 # Entrypoint del backend (Smart Retail Platform).
 # 1. Espera a que PostgreSQL esté disponible.
-# 2. Aplica las migraciones de Alembic (alembic upgrade head).
+# 2. Verifica diferencias entre modelos y BD: si existen, genera una
+#    migración automática y la aplica (verify_db_schema.py).
 # 3. Arranca la API con Uvicorn.
 set -e
 
@@ -29,8 +30,8 @@ else:
     sys.exit(1)
 PYEOF
 
-echo "Aplicando migraciones de Alembic..."
-alembic upgrade head
+echo "Verificando esquema de la base de datos y aplicando migraciones..."
+python verify_db_schema.py
 
 echo "Iniciando servidor API (uvicorn)..."
 exec uvicorn main:app --host 0.0.0.0 --port 8000
