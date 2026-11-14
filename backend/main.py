@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 
 from src.modules.auth.router import AuthRouter
 from src.modules.tenant.router import TenantRouter
+from src.modules.catalog.router import CatalogRouter
 from src.core.config import settings
 from src.core.exceptions import DomainError
 
@@ -11,6 +12,7 @@ app = FastAPI()
 
 app.include_router(AuthRouter().router, prefix=settings.api_v1_prefix)
 app.include_router(TenantRouter().router, prefix=settings.api_v1_prefix)
+app.include_router(CatalogRouter().router, prefix=settings.api_v1_prefix)
 
 
 @app.exception_handler(DomainError)
