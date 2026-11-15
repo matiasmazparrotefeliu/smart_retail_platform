@@ -1,0 +1,32 @@
+# Tests del backend en cada Pull Request hacia develop.
+#
+# La suite (tests/) usa una DB SQLite transitoria que conftest.py crea y
+# destruye por test (os.environ.setdefault("DATABASE_URL", ...) respeta
+# cualquier DATABASE_URL del entorno), por lo que no se requiere un
+# servicio de PostgreSQL en CI.
+name: Backend Tests
+
+on:
+  pull_request:
+    branches: [develop]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      # pytest.ini define testpaths=tests (auth, tenant, catalog: unit + integration)
+      - name: Run test suite
+        run: python -m pytest -q

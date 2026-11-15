@@ -19,3 +19,4 @@ frontend/.local
 .vscode/
 .ipynb
 ipynb
+*.ipynb

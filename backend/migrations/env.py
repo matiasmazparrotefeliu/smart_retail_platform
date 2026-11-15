@@ -50,6 +50,7 @@ from src.core import config as app_config
 from src.core.database import Base
 from src.modules.tenant import models as tenant_models
 from src.modules.auth import models as auth_models
+from src.modules.catalog import models as catalog_models
 
 target_metadata = Base.metadata
 
